@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Streamer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #333;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        video {
+            width: 80%;
+            margin: 20px 0;
+        }
+        .control-panel {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .control-panel button {
+            padding: 10px 20px;
+            background-color: #555;
+            border: none;
+            color: white;
+            cursor: pointer;
+        }
+        .control-panel button:hover {
+            background-color: #777;
+        }
+        .adjust-brightness {
+            filter: brightness(3.5);
+        }
+        .adjust-contrast {
+            filter: contrast(3.5);
+        }
+        #timestamps, #revisions {
+            margin-top: 20px;
+        }
+        #timestamps li, #revisions li {
+            margin-bottom: 5px;
+            cursor: pointer;
+            color: blue;
+            text-decoration: underline;
+        }
+        .revision-video {
+            margin-top: 20px;
+        }
+    </style>
+    <!-- Include YouTube API -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <!-- Include Vimeo API -->
+    <script src="https://player.vimeo.com/api/player.js"></script>
+</head>
+<body>
+    <h1>Video Streamer</h1>
+    <div class="container">
+        <div class="video-container">
+          <video id="videoElement" controls>
+            <source src="class2.mp4" type="video/mp4"> 
+            Your browser does not support the video tag.
+          </video>
+        </div>
+    </div>
+    <br>
+    <div class="control-panel">
+        <button id="add-timestamp">Add Timestamp</button>
+        <button id="start-flag">Start Flag</button>
+        <button id="end-flag">End Flag</button>
+        <button onclick="endRevision()">End Revision</button>
+        <button onclick="adjustVisuals()">Adjust Visuals</button>
+    </div>
+    <div id="revision-video-container" class="revision-video"></div>
+    <h2>Timestamps</h2>
+    <ul id="timestamps"></ul>
+    <h2>Revisions</h2>
+    <ul id="revisions"></ul>
+
+    <script>
+        // Variables for player and video type
+        let player;
+        let videoType = 'html';
+        let startTimestamp = null;
+        let endTimestamp = null;
+        let isRevisionActive = false;
+
+        function initPlayer() {
+            const video = document.getElementById('videoElement');
+            player = video;
+
+            // Load saved timestamps from local storage for this video
+            const videoSrc = video.currentSrc;
+            const timestamps = JSON.parse(localStorage.getItem(`timestamps_${videoSrc}`)) || [];
+            timestamps.forEach(timestamp => {
+                addTimestampToList(timestamp);
+            });
+
+            // Load saved revisions from local storage for this video
+            const revisions = JSON.parse(localStorage.getItem(`revisions_${videoSrc}`)) || [];
+            revisions.forEach(revision => {
+                displayRevision(revision);
+            });
+
+            // Call onPlayerReady when video metadata is loaded
+            player.addEventListener('loadedmetadata', onPlayerReady);
+        }
+
+        function onPlayerReady(event) {
+            console.log(`${videoType} Player Ready`);
+            document.getElementById('add-timestamp').addEventListener('click', () => {
+                if (player) {
+                    pauseVideo(); // Pause video when adding timestamp
+
+                    setTimeout(() => { // Delay to ensure video is paused before prompt
+                        const currentTime = new Date().toLocaleString();
+                        const videoTime = getVideoCurrentTime();
+                        const mins = Math.floor(videoTime / 60);
+                        const secs = Math.floor(videoTime % 60).toString().padStart(2, '0');
+                        const formattedTime = `${mins}:${secs}`;
+
+                        const timestampName = prompt("Enter a name for this timestamp:");
+                        if (timestampName) {
+                            const timestamp = {
+                                videoTime,
+                                displayTime: formattedTime,
+                                name: timestampName,
+                                addedTime: currentTime
+                            };
+
+                            // Check for undefined or NaN values in timestamp object
+                            if (isNaN(timestamp.videoTime)) {
+                                alert('Invalid video time, cannot add timestamp.');
+                                return;
+                            }
+
+                            // Save the timestamp in local storage for this video
+                            const videoSrc = player.currentSrc;
+                            let timestamps = JSON.parse(localStorage.getItem(`timestamps_${videoSrc}`)) || [];
+                            timestamps.push(timestamp);
+                            localStorage.setItem(`timestamps_${videoSrc}`, JSON.stringify(timestamps));
+
+                            // Display the timestamp
+                            addTimestampToList(timestamp);
+
+                            playVideo(); // Resume video after adding timestamp
+                        } else {
+                            playVideo(); // Resume video if cancel or empty name
+                        }
+                    }, 100);
+                } else {
+                    alert('No video player initialized.');
+                }
+            });
+
+            document.getElementById('start-flag').addEventListener('click', () => {
+                startTimestamp = getVideoCurrentTime();
+                console.log('Start timestamp:', startTimestamp);
+            });
+
+            document.getElementById('end-flag').addEventListener('click', () => {
+                endTimestamp = getVideoCurrentTime();
+                console.log('End timestamp:', endTimestamp);
+
+                pauseVideo(); // Pause video when entering revision name
+
+                setTimeout(() => {
+                    const revisionName = prompt("Enter a name for this revision:");
+                    if (revisionName) {
+                        const revision = {
+                            startTimestamp,
+                            endTimestamp,
+                            name: revisionName
+                        };
+
+                        // Save the revision in local storage for this video
+                        const videoSrc = player.currentSrc;
+                        let revisions = JSON.parse(localStorage.getItem(`revisions_${videoSrc}`)) || [];
+                        revisions.push(revision);
+                        localStorage.setItem(`revisions_${videoSrc}`, JSON.stringify(revisions));
+
+                        // Display the revision under the Revision heading
+                        displayRevision(revision);
+
+                        playVideo(); // Resume video after entering revision name
+                    } else {
+                        playVideo(); // Resume video if cancel or empty name
+                    }
+                }, 100);
+            });
+        }
+
+        function onPlayerStateChange(event) {
+            console.log(`${videoType} Player State Changed:`, event.data);
+            if (event.data == YT.PlayerState.PLAYING && endTimestamp && isRevisionActive) {
+                setTimeout(checkEndTime, 1000);
+            }
+        }
+
+        function onPlayerError(event) {
+            console.error(`${videoType} Player Error:`, event.data);
+        }
+
+        function checkEndTime() {
+            if (player && getVideoCurrentTime() >= endTimestamp && isRevisionActive) {
+                seekToVideo(startTimestamp); // Seek back to the start of revision
+            } else {
+                setTimeout(checkEndTime, 1000);
+            }
+        }
+
+        function addTimestampToList(timestamp) {
+            const timestampList = document.getElementById('timestamps');
+            const li = document.createElement('li');
+            if (timestamp.displayTime && timestamp.name) {
+                li.textContent = `${timestamp.displayTime} - ${timestamp.name}`;
+                li.addEventListener('click', () => {
+                    if (!isRevisionActive) {
+                        seekToVideo(timestamp.videoTime);
+                        playVideo();
+                    } else {
+                        alert('A revision is currently active. End it to proceed.');
+                    }
+                });
+                timestampList.appendChild(li);
+            } else {
+                console.error('Invalid timestamp object:', timestamp);
+            }
+        }
+
+        function displayRevision(revision) {
+            const revisionList = document.getElementById('revisions');
+            const li = document.createElement('li');
+            li.addEventListener('click', () => {
+                startTimestamp = revision.startTimestamp;
+                endTimestamp = revision.endTimestamp;
+                isRevisionActive = false;
+                playRevisionLoop(startTimestamp, endTimestamp);
+            });
+            if (revision.name) {
+                li.textContent = `${revision.name}: ${formatTime(revision.startTimestamp)} to ${formatTime(revision.endTimestamp)}`;
+                li.addEventListener('click', () => {
+                    startTimestamp = revision.startTimestamp;
+                    endTimestamp = revision.endTimestamp;
+                    isRevisionActive = true;
+                    playRevisionLoop(startTimestamp, endTimestamp);
+                });
+                revisionList.appendChild(li);
+            } else {
+                console.error('Invalid revision object:', revision);
+            }
+        }
+
+        function playRevisionLoop(start, end) {
+            if (start !== null && end !== null) {
+                seekToVideo(start);
+
+                function checkRevisionEnd() {
+                    if (getVideoCurrentTime() >= end && isRevisionActive) {
+                        seekToVideo(start);
+                    }
+                    setTimeout(checkRevisionEnd, 1000);
+                }
+
+                checkRevisionEnd();
+            } else {
+                startTimestamp = null;
+                endTimestamp = null;
+                isRevisionActive = false;
+                playVideo();
+            }
+        }
+
+        function endRevision() {
+            startTimestamp = null;
+            endTimestamp = null;
+            isRevisionActive = false;
+            playVideo();
+        }
+
+        function formatTime(time) {
+            const mins = Math.floor(time / 60);
+            const secs = Math.floor(time % 60).toString().padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        function pauseVideo() {
+            player.pause();
+        }
+
+        function playVideo() {
+            player.play();
+        }
+
+        function getVideoCurrentTime() {
+            return player.currentTime;
+        }
+
+        function seekToVideo(time) {
+            player.currentTime = time;
+        }
+
+        function adjustVisuals() {
+            const videoElement = document.getElementById('videoElement');
+            let brightness = 100;
+            let contrast = 100;
+            let saturation = 100;
+        
+            function applyColorEnhancements() {
+                videoElement.style.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+            }
+        
+            videoElement.addEventListener('loadeddata', () => { 
+                applyColorEnhancements(); // Apply initial filter when video is loaded
+            });
+        
+            // Filter Controls (You can remove this if you don't want to use them)
+            const filterControls = document.createElement('div');
+            filterControls.innerHTML = `
+                <label for="brightness">Brightness:</label>
+                <input type="range" id="brightness" name="brightness" min="0" max="200" value="${brightness}"><br>
+                <label for="contrast">Contrast:</label>
+                <input type="range" id="contrast" name="contrast" min="0" max="200" value="${contrast}"><br>
+                <label for="saturation">Saturation:</label>
+                <input type="range" id="saturation" name="saturation" min="0" max="200" value="${saturation}"><br>
+            `;
+            document.querySelector('.container').appendChild(filterControls);
+        
+            // Update filter values on input change
+            document.querySelectorAll('#brightness, #contrast, #saturation').forEach(input => {
+                input.addEventListener('input', (event) => {
+                    if (event.target.id === 'brightness') {
+                        brightness = event.target.value;
+                    } else if (event.target.id === 'contrast') {
+                        contrast = event.target.value;
+                    } else if (event.target.id === 'saturation') {
+                        saturation = event.target.value;
+                    }
+                    applyColorEnhancements(); 
+                });
+            });
+        }
+
+        // Initialize the player
+        document.addEventListener('DOMContentLoaded', initPlayer);
+    </script>
+</body>
+</html>
